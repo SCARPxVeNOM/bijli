@@ -1,4 +1,5 @@
 export * from "./db.js";
+export * from "./dynamoDbStore.js";
 export * from "./weather.js";
 export * from "./applianceEstimator.js";
 export * from "./cheapHours.js";

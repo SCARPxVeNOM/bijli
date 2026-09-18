@@ -4,14 +4,20 @@
   "version": "0.1.0",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "infra"
   ],
   "scripts": {
-    "dev:server": "npm run dev -w @bijli/server",
+    "dev:server": "tsc -b apps/server && npm run dev -w @bijli/server",
     "dev:web": "npm run dev -w @bijli/web",
-    "build": "tsc -b apps/server && npm run build -w @bijli/web"
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -b apps/server",
+    "build:web": "npm run build -w @bijli/web"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "railway": "^3.11.0"
   }
 }

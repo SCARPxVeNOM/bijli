@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  BijliSaathi's spec architecture (API Gateway + Lambda, Step Functions,
+  DynamoDB, EventBridge, S3), run against LocalStack -- no AWS account, card,
+  or bill required. See infra/README.md for setup and demo commands.
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 20
+    MemorySize: 256
+    Environment:
+      Variables:
+        HOUSEHOLDS_TABLE: !Ref HouseholdsTable
+        PLANS_TABLE: !Ref PlansTable
+        SHIFT_LOGS_TABLE: !Ref ShiftLogsTable
+        OUTAGE_REPORTS_TABLE: !Ref OutageReportsTable
+        RAW_DATA_BUCKET: !Ref RawDataBucket
+        # LocalStack's DNS alias that resolves correctly both from the host
+        # and from inside its own Lambda execution containers. Remove this
+        # variable entirely when deploying to real AWS.
+        AWS_ENDPOINT_URL: http://localhost.localstack.cloud:4566
+
+Resources:
+  # --- DynamoDB (spec: "Households, appliances, plans, shift logs, outage reports") ---
+  HouseholdsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  PlansTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: householdId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: householdId
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+
+  ShiftLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: householdId
+          AttributeType: S
+        - AttributeName: doneAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: householdId
+          KeyType: HASH
+        - AttributeName: doneAt
+          KeyType: RANGE
+
+  OutageReportsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pincode
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pincode
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+
+  # --- S3 (spec: "Raw grid and weather data") ---
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+
+  # --- API Gateway + Lambda (spec: "Chat webhook and the web page's API") ---
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: api.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref HouseholdsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref PlansTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref ShiftLogsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref OutageReportsTable }
+      Events:
+        Root:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+        Proxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: ["api.ts"]
+        Target: "node20"
+
+  # --- Step Functions daily pipeline (spec: "fetch -> forecast -> risk -> plans -> send") ---
+  ListHouseholdsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: listHouseholds.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref HouseholdsTable }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: ["listHouseholds.ts"]
+        Target: "node20"
+
+  GeneratePlanFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: generatePlan.handler
+      CodeUri: src/
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref HouseholdsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref PlansTable }
+        - DynamoDBReadPolicy: { TableName: !Ref OutageReportsTable }
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: ["generatePlan.ts"]
+        Target: "node20"
+
+  DailyPipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Definition:
+        StartAt: ListHouseholds
+        States:
+          ListHouseholds:
+            Type: Task
+            Resource: !GetAtt ListHouseholdsFunction.Arn
+            Next: GenerateAllPlans
+          GenerateAllPlans:
+            Type: Map
+            ItemsPath: "$"
+            MaxConcurrency: 5
+            Parameters:
+              householdId.$: "$$.Map.Item.Value"
+            Iterator:
+              StartAt: GeneratePlan
+              States:
+                GeneratePlan:
+                  Type: Task
+                  Resource: !GetAtt GeneratePlanFunction.Arn
+                  End: true
+            End: true
+      Policies:
+        - LambdaInvokePolicy: { FunctionName: !Ref ListHouseholdsFunction }
+        - LambdaInvokePolicy: { FunctionName: !Ref GeneratePlanFunction }
+
+  # --- EventBridge Scheduler (spec: "Triggers daily data pulls and message sends") ---
+  DailyScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: events.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartDailyPipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref DailyPipelineStateMachine
+
+  DailyScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: "cron(0 18 * * ? *)"
+      State: ENABLED
+      Targets:
+        - Id: DailyPipelineTarget
+          Arn: !Ref DailyPipelineStateMachine
+          RoleArn: !GetAtt DailyScheduleRole.Arn
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the API (append /api/... or /health)
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+  StateMachineArn:
+    Value: !Ref DailyPipelineStateMachine

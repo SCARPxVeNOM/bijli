@@ -8,32 +8,35 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 *
 export function buildRouter(households: HouseholdService): Router {
   const router = Router();
 
-  router.post("/households", (req, res) => {
-    const phone = String(req.body.phone ?? `web-${Date.now()}`);
-    const household = households.startHousehold(phone);
-    res.json(household);
-  });
-
-  router.get("/households/:id", (req, res, next) => {
+  router.post("/households", async (req, res, next) => {
     try {
-      res.json(households.getHousehold(req.params.id));
+      const phone = String(req.body.phone ?? `web-${Date.now()}`);
+      res.json(await households.startHousehold(phone));
     } catch (err) {
       next(err);
     }
   });
 
-  router.post("/households/:id/language", (req, res, next) => {
+  router.get("/households/:id", async (req, res, next) => {
+    try {
+      res.json(await households.getHousehold(req.params.id));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post("/households/:id/language", async (req, res, next) => {
     try {
       const language = String(req.body.language) as Language;
-      res.json(households.setLanguage(req.params.id, language));
+      res.json(await households.setLanguage(req.params.id, language));
     } catch (err) {
       next(err);
     }
   });
 
-  router.post("/households/:id/pincode", (req, res, next) => {
+  router.post("/households/:id/pincode", async (req, res, next) => {
     try {
-      res.json(households.setPincode(req.params.id, String(req.body.pincode)));
+      res.json(await households.setPincode(req.params.id, String(req.body.pincode)));
     } catch (err) {
       next(err);
     }
@@ -59,10 +62,10 @@ export function buildRouter(households: HouseholdService): Router {
     }
   });
 
-  router.post("/households/:id/bill/confirm", (req, res, next) => {
+  router.post("/households/:id/bill/confirm", async (req, res, next) => {
     try {
       const corrections = req.body.corrections as Partial<Bill> | undefined;
-      res.json(households.confirmBill(req.params.id, corrections));
+      res.json(await households.confirmBill(req.params.id, corrections));
     } catch (err) {
       next(err);
     }
@@ -78,9 +81,9 @@ export function buildRouter(households: HouseholdService): Router {
     }
   });
 
-  router.get("/households/:id/breakdown", (req, res, next) => {
+  router.get("/households/:id/breakdown", async (req, res, next) => {
     try {
-      res.json(households.getApplianceShares(req.params.id));
+      res.json(await households.getApplianceShares(req.params.id));
     } catch (err) {
       next(err);
     }
@@ -122,25 +125,29 @@ export function buildRouter(households: HouseholdService): Router {
     }
   });
 
-  router.post("/households/:id/outage", (req, res, next) => {
+  router.post("/households/:id/outage", async (req, res, next) => {
     try {
-      households.reportOutage(req.params.id);
+      await households.reportOutage(req.params.id);
       res.json({ ok: true });
     } catch (err) {
       next(err);
     }
   });
 
-  router.get("/households/:id/savings", (req, res, next) => {
+  router.get("/households/:id/savings", async (req, res, next) => {
     try {
-      res.json(households.getSavingsSummary(req.params.id));
+      res.json(await households.getSavingsSummary(req.params.id));
     } catch (err) {
       next(err);
     }
   });
 
-  router.get("/impact", (_req, res) => {
-    res.json(households.getImpactTotals());
+  router.get("/impact", async (_req, res, next) => {
+    try {
+      res.json(await households.getImpactTotals());
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.use((err: Error, _req: any, res: any, _next: any) => {

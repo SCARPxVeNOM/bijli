@@ -1,0 +1,20 @@
+services:
+  localstack:
+    # Pinned to a Community-edition release. "latest" now resolves to a build
+    # that requires a LocalStack Pro auth token (LOCALSTACK_AUTH_TOKEN) even
+    # to start -- this pinned tag runs with edition: "community", no signup
+    # or token needed, matching the spec's "no account, no card, no bill".
+    image: localstack/localstack:3.8.1
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb,s3,events,stepfunctions,lambda,apigateway,iam,logs,cloudformation,sts
+      - DEBUG=0
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "localstack-data:/var/lib/localstack"
+
+volumes:
+  localstack-data:

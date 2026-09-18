@@ -3,11 +3,31 @@ import path from "node:path";
 import type { DailyPlan, Household, OutageReport, ShiftLog } from "@bijli/domain";
 
 /**
+ * Storage contract shared by every backing store BijliSaathi can run
+ * against: the local JSON file (`JsonDb`, below) and the real
+ * `DynamoDbStore` (packages/core/src/dynamoDbStore.ts) used when running
+ * against AWS or LocalStack. `HouseholdService` depends only on this
+ * interface, never on a concrete store, so swapping the backend touches
+ * nothing else.
+ */
+export interface Store {
+  getHousehold(id: string): Promise<Household | undefined>;
+  putHousehold(h: Household): Promise<void>;
+  listHouseholds(): Promise<Household[]>;
+  putPlan(plan: DailyPlan): Promise<void>;
+  getPlan(householdId: string, date: string): Promise<DailyPlan | undefined>;
+  listPlansForHousehold(householdId: string): Promise<DailyPlan[]>;
+  addShiftLog(log: ShiftLog): Promise<void>;
+  listShiftLogs(householdId?: string): Promise<ShiftLog[]>;
+  addOutageReport(report: OutageReport): Promise<void>;
+  listOutageReports(pincode?: string): Promise<OutageReport[]>;
+  recentOutageCount(pincode: string, withinMs: number): Promise<number>;
+}
+
+/**
  * A tiny JSON-file store standing in for DynamoDB during the local prototype.
  * Shape mirrors the four DynamoDB "tables" from the spec's architecture
- * (households, plans, shift logs, outage reports) so swapping in the real
- * DynamoDB client later is a matter of re-implementing this class, not the
- * services that call it.
+ * (households, plans, shift logs, outage reports).
  */
 interface DbShape {
   households: Record<string, Household>;
@@ -18,7 +38,7 @@ interface DbShape {
 
 const EMPTY: DbShape = { households: {}, plans: {}, shiftLogs: [], outageReports: [] };
 
-export class JsonDb {
+export class JsonDb implements Store {
   private filePath: string;
   private data: DbShape;
 
@@ -42,54 +62,54 @@ export class JsonDb {
   }
 
   // --- households ---
-  getHousehold(id: string): Household | undefined {
+  async getHousehold(id: string): Promise<Household | undefined> {
     return this.data.households[id];
   }
 
-  putHousehold(h: Household) {
+  async putHousehold(h: Household): Promise<void> {
     this.data.households[h.id] = h;
     this.save();
   }
 
-  listHouseholds(): Household[] {
+  async listHouseholds(): Promise<Household[]> {
     return Object.values(this.data.households);
   }
 
   // --- plans ---
-  putPlan(plan: DailyPlan) {
+  async putPlan(plan: DailyPlan): Promise<void> {
     this.data.plans[`${plan.householdId}:${plan.date}`] = plan;
     this.save();
   }
 
-  getPlan(householdId: string, date: string): DailyPlan | undefined {
+  async getPlan(householdId: string, date: string): Promise<DailyPlan | undefined> {
     return this.data.plans[`${householdId}:${date}`];
   }
 
-  listPlansForHousehold(householdId: string): DailyPlan[] {
+  async listPlansForHousehold(householdId: string): Promise<DailyPlan[]> {
     return Object.values(this.data.plans).filter((p) => p.householdId === householdId);
   }
 
   // --- shift logs ---
-  addShiftLog(log: ShiftLog) {
+  async addShiftLog(log: ShiftLog): Promise<void> {
     this.data.shiftLogs.push(log);
     this.save();
   }
 
-  listShiftLogs(householdId?: string): ShiftLog[] {
+  async listShiftLogs(householdId?: string): Promise<ShiftLog[]> {
     return householdId ? this.data.shiftLogs.filter((l) => l.householdId === householdId) : this.data.shiftLogs;
   }
 
   // --- outage reports ---
-  addOutageReport(report: OutageReport) {
+  async addOutageReport(report: OutageReport): Promise<void> {
     this.data.outageReports.push(report);
     this.save();
   }
 
-  listOutageReports(pincode?: string): OutageReport[] {
+  async listOutageReports(pincode?: string): Promise<OutageReport[]> {
     return pincode ? this.data.outageReports.filter((r) => r.pincode === pincode) : this.data.outageReports;
   }
 
-  recentOutageCount(pincode: string, withinMs: number): number {
+  async recentOutageCount(pincode: string, withinMs: number): Promise<number> {
     const cutoff = Date.now() - withinMs;
     return this.data.outageReports.filter((r) => r.pincode === pincode && new Date(r.timestamp).getTime() >= cutoff)
       .length;

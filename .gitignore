@@ -6,3 +6,6 @@ dist/
 *.tsbuildinfo
 apps/server/.data/
 apps/web/dist/
+infra/.aws-sam/
+.railway/tmp/
+.claude/

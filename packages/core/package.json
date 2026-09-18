@@ -2,12 +2,15 @@
   "name": "@bijli/core",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "dependencies": {
     "@bijli/domain": "*",
     "@bijli/data": "*",
     "@anthropic-ai/sdk": "^0.32.0",
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "@google/genai": "^2.23.0",
     "nanoid": "^5.0.7"
   }
 }
