@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import "dotenv/config";
 import cron from "node-cron";
-import { HouseholdService, JsonDb } from "@bijli/core";
+import { HouseholdService, JsonDb, SocietyService } from "@bijli/core";
 import { buildApp } from "./app.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -11,7 +11,8 @@ const DB_PATH = path.join(__dirname, "..", ".data", "db.json");
 
 const db = new JsonDb(DB_PATH);
 const households = new HouseholdService(db);
-const app = buildApp(households);
+const societies = new SocietyService(db, households);
+const app = buildApp(households, societies);
 
 app.listen(PORT, () => {
   console.log(`BijliSaathi server listening on http://localhost:${PORT}`);

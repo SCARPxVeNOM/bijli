@@ -9,8 +9,10 @@ import type {
   Household,
   ImpactTotals,
   Language,
+  LiveSmartPlugReading,
   SavingsSummary,
   ShiftLog,
+  SmartMeterReading,
 } from "@bijli/domain";
 import { estimateApplianceShares } from "./applianceEstimator.js";
 import { computeCheapWindow } from "./cheapHours.js";
@@ -104,7 +106,7 @@ export class HouseholdService {
     h.appliances = appliances;
     h.conversationState = "onboarded";
     await this.db.putHousehold(h);
-    const shares = estimateApplianceShares(h.appliances, h.bill);
+    const shares = estimateApplianceShares(h.appliances, h.bill, h.smartMeterReadings);
     const plan = await this.generateDailyPlan(id);
     return { household: h, shares, plan };
   }
@@ -118,8 +120,8 @@ export class HouseholdService {
     const cheapWindow = computeCheapWindow(tariff, forecast);
     const recentOutages = h.pincode ? await this.db.recentOutageCount(h.pincode, 3 * 24 * 60 * 60 * 1000) : 0;
     const cutRisk = computeCutRisk({ tariff, forecast, recentOutageReports: recentOutages });
-    const shares = estimateApplianceShares(h.appliances, h.bill);
-    const actions = buildDailyPlan(h.appliances, shares, tariff, cheapWindow);
+    const shares = estimateApplianceShares(h.appliances, h.bill, h.smartMeterReadings);
+    const actions = buildDailyPlan(h.appliances, shares, tariff, cheapWindow, h.rooftopSolarKw);
 
     const provider = getLLMProvider();
     const messageText = await provider.writeDailyMessage({ cheapWindow, cutRisk, actions }, h.language);
@@ -136,9 +138,36 @@ export class HouseholdService {
     return plan;
   }
 
+  /** Smart meter data import (stretch #4): real daily readings replace the appliance estimate. */
+  async importSmartMeterReadings(id: string, readings: SmartMeterReading[]): Promise<Household> {
+    const h = await this.getHousehold(id);
+    h.smartMeterReadings = readings;
+    await this.db.putHousehold(h);
+    return h;
+  }
+
+  async setRooftopSolar(id: string, rooftopSolarKw: number): Promise<Household> {
+    const h = await this.getHousehold(id);
+    h.rooftopSolarKw = rooftopSolarKw;
+    await this.db.putHousehold(h);
+    return h;
+  }
+
+  /** Smart-plug software receiver (stretch #2) -- untested without real hardware. */
+  async recordSmartPlugReading(id: string, reading: LiveSmartPlugReading): Promise<void> {
+    const h = await this.getHousehold(id);
+    h.latestSmartPlugReading = reading;
+    await this.db.putHousehold(h);
+  }
+
+  async getLatestSmartPlugReading(id: string): Promise<LiveSmartPlugReading | undefined> {
+    const h = await this.getHousehold(id);
+    return h.latestSmartPlugReading;
+  }
+
   async getApplianceShares(id: string): Promise<ApplianceShare[]> {
     const h = await this.getHousehold(id);
-    return estimateApplianceShares(h.appliances, h.bill);
+    return estimateApplianceShares(h.appliances, h.bill, h.smartMeterReadings);
   }
 
   async getTodayPlan(id: string): Promise<DailyPlan> {
@@ -151,8 +180,26 @@ export class HouseholdService {
   async askQuestion(id: string, question: string): Promise<string> {
     const h = await this.getHousehold(id);
     const plan = await this.getTodayPlan(id);
+    const context = { plan, currentHour: new Date().getHours() };
+    if (process.env.STRANDS_QA === "true") {
+      try {
+        const { answerWithStrands } = await import("./llm/strandsQaAgent.js");
+        return await answerWithStrands(question, context, h.language, h.state);
+      } catch (err) {
+        console.error("Strands QA agent failed, falling back to direct Gemini call:", err);
+      }
+    }
     const provider = getLLMProvider();
-    return provider.answerQuestion(question, { plan, currentHour: new Date().getHours() }, h.language);
+    return provider.answerQuestion(question, context, h.language);
+  }
+
+  /** Voice notes (stretch #5). Throws if the active provider has no real TTS (mock/Anthropic) -- callers should let that surface as "unavailable", never fake audio. */
+  async getPlanSpeech(id: string) {
+    const h = await this.getHousehold(id);
+    const plan = await this.getTodayPlan(id);
+    const provider = getLLMProvider();
+    if (!provider.synthesizeSpeech) throw new Error(`${provider.name} does not support speech synthesis`);
+    return provider.synthesizeSpeech(plan.messageText, h.language);
   }
 
   async logDone(id: string, applianceType: ApplianceEntry["type"]): Promise<ShiftLog> {
@@ -188,5 +235,17 @@ export class HouseholdService {
 
   async listOutageReportsByPincode(pincode: string) {
     return this.db.listOutageReports(pincode);
+  }
+
+  /** All outage reports in the last `hours`, joined with real lat/lon for the outage map. */
+  async listRecentOutages(hours = 24) {
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    const all = await this.db.listOutageReports();
+    return all
+      .filter((r) => new Date(r.timestamp).getTime() >= cutoff)
+      .map((r) => {
+        const info = resolvePincode(r.pincode);
+        return { ...r, lat: info.lat, lon: info.lon, city: info.city };
+      });
   }
 }

@@ -6,7 +6,7 @@ import {
   QueryCommand,
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
-import type { DailyPlan, Household, OutageReport, ShiftLog } from "@bijli/domain";
+import type { DailyPlan, Household, OutageReport, ShiftLog, Society } from "@bijli/domain";
 import type { Store } from "./db.js";
 
 export interface DynamoDbStoreConfig {
@@ -14,6 +14,7 @@ export interface DynamoDbStoreConfig {
   plansTable?: string;
   shiftLogsTable?: string;
   outageReportsTable?: string;
+  societiesTable?: string;
   /** LocalStack endpoint, e.g. http://localhost:4566. Unset for real AWS. */
   endpoint?: string;
 }
@@ -31,6 +32,7 @@ export class DynamoDbStore implements Store {
   private plansTable: string;
   private shiftLogsTable: string;
   private outageReportsTable: string;
+  private societiesTable: string;
 
   constructor(config: DynamoDbStoreConfig = {}) {
     const endpoint = config.endpoint ?? process.env.AWS_ENDPOINT_URL;
@@ -43,6 +45,7 @@ export class DynamoDbStore implements Store {
     this.plansTable = config.plansTable ?? process.env.PLANS_TABLE ?? "Plans";
     this.shiftLogsTable = config.shiftLogsTable ?? process.env.SHIFT_LOGS_TABLE ?? "ShiftLogs";
     this.outageReportsTable = config.outageReportsTable ?? process.env.OUTAGE_REPORTS_TABLE ?? "OutageReports";
+    this.societiesTable = config.societiesTable ?? process.env.SOCIETIES_TABLE ?? "Societies";
   }
 
   async getHousehold(id: string): Promise<Household | undefined> {
@@ -123,5 +126,19 @@ export class DynamoDbStore implements Store {
     const reports = await this.listOutageReports(pincode);
     const cutoff = Date.now() - withinMs;
     return reports.filter((r) => new Date(r.timestamp).getTime() >= cutoff).length;
+  }
+
+  async getSociety(id: string): Promise<Society | undefined> {
+    const res = await this.doc.send(new GetCommand({ TableName: this.societiesTable, Key: { id } }));
+    return res.Item as Society | undefined;
+  }
+
+  async putSociety(society: Society): Promise<void> {
+    await this.doc.send(new PutCommand({ TableName: this.societiesTable, Item: society }));
+  }
+
+  async listSocieties(): Promise<Society[]> {
+    const res = await this.doc.send(new ScanCommand({ TableName: this.societiesTable }));
+    return (res.Items ?? []) as Society[];
   }
 }

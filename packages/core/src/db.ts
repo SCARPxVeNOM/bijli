@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { DailyPlan, Household, OutageReport, ShiftLog } from "@bijli/domain";
+import type { DailyPlan, Household, OutageReport, ShiftLog, Society } from "@bijli/domain";
 
 /**
  * Storage contract shared by every backing store BijliSaathi can run
@@ -22,6 +22,9 @@ export interface Store {
   addOutageReport(report: OutageReport): Promise<void>;
   listOutageReports(pincode?: string): Promise<OutageReport[]>;
   recentOutageCount(pincode: string, withinMs: number): Promise<number>;
+  getSociety(id: string): Promise<Society | undefined>;
+  putSociety(society: Society): Promise<void>;
+  listSocieties(): Promise<Society[]>;
 }
 
 /**
@@ -34,9 +37,10 @@ interface DbShape {
   plans: Record<string, DailyPlan>; // key: `${householdId}:${date}`
   shiftLogs: ShiftLog[];
   outageReports: OutageReport[];
+  societies: Record<string, Society>;
 }
 
-const EMPTY: DbShape = { households: {}, plans: {}, shiftLogs: [], outageReports: [] };
+const EMPTY: DbShape = { households: {}, plans: {}, shiftLogs: [], outageReports: [], societies: {} };
 
 export class JsonDb implements Store {
   private filePath: string;
@@ -113,5 +117,19 @@ export class JsonDb implements Store {
     const cutoff = Date.now() - withinMs;
     return this.data.outageReports.filter((r) => r.pincode === pincode && new Date(r.timestamp).getTime() >= cutoff)
       .length;
+  }
+
+  // --- societies ---
+  async getSociety(id: string): Promise<Society | undefined> {
+    return this.data.societies[id];
+  }
+
+  async putSociety(society: Society): Promise<void> {
+    this.data.societies[society.id] = society;
+    this.save();
+  }
+
+  async listSocieties(): Promise<Society[]> {
+    return Object.values(this.data.societies);
   }
 }

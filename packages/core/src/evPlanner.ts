@@ -1,4 +1,4 @@
-import { EV_ENERGY_PER_KM } from "@bijli/data";
+import { computeEffectiveRates, EV_ENERGY_PER_KM } from "@bijli/data";
 import type { TariffPlan } from "@bijli/data";
 import type { ApplianceEntry, CheapWindow, PlanAction } from "@bijli/domain";
 
@@ -8,21 +8,28 @@ import type { ApplianceEntry, CheapWindow, PlanAction } from "@bijli/domain";
  * otherwise after the evening peak. Night charging saves money but is never
  * labelled green, since the grid is coal-heavy after dark.
  */
-export function planEvCharging(entry: ApplianceEntry, tariff: TariffPlan, cheapWindow: CheapWindow): PlanAction | undefined {
+export function planEvCharging(
+  entry: ApplianceEntry,
+  tariff: TariffPlan,
+  cheapWindow: CheapWindow,
+  rooftopSolarKw?: number
+): PlanAction | undefined {
   if (!entry.ev) return undefined;
   const { vehicleType, dailyKm, parkedDaytime, officeHasCharger } = entry.ev;
   const kWhNeeded = Math.round(dailyKm * EV_ENERGY_PER_KM[vehicleType] * 10) / 10;
-  const normalRate = tariff.normalRatePerKWh;
-  const peakRate = normalRate * (1 + tariff.peakSurchargePercent / 100);
-  const solarRate = normalRate * (1 - tariff.solarDiscountPercent / 100);
+  const { normalRate, peakRate, solarRate } = computeEffectiveRates(tariff);
+  const chargerKw = vehicleType === "car" ? 5 : 0.9;
+  const ownSolarCoversIt = (rooftopSolarKw ?? 0) >= chargerKw;
 
   const applianceType = entry.type;
 
   if (parkedDaytime === "home") {
-    const savings = kWhNeeded * (peakRate - solarRate);
+    const savings = kWhNeeded * (peakRate - (ownSolarCoversIt ? 0 : solarRate));
     return {
       applianceType,
-      action: `Charge ${vehicleType === "car" ? "the car" : "the scooter"} ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00 (solar hours), not in the evening — top up ~${kWhNeeded} kWh for tomorrow's ${dailyKm} km`,
+      action: ownSolarCoversIt
+        ? `Charge ${vehicleType === "car" ? "the car" : "the scooter"} ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00 on your own rooftop solar, free -- top up ~${kWhNeeded} kWh for tomorrow's ${dailyKm} km`
+        : `Charge ${vehicleType === "car" ? "the car" : "the scooter"} ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00 (solar hours), not in the evening — top up ~${kWhNeeded} kWh for tomorrow's ${dailyKm} km`,
       windowStartHour: cheapWindow.startHour,
       windowEndHour: cheapWindow.endHour,
       estSavingsRupees: Math.round(savings),

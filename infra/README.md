@@ -94,6 +94,7 @@ awslocal dynamodb scan --table-name "$TABLE"
 | Daily pipeline | `node-cron` in-process | Step Functions state machine, EventBridge-scheduled |
 | LLM | Gemini (or Anthropic/mock) via `GEMINI_API_KEY` | Mock by default -- add `GEMINI_API_KEY` to the SAM template's `Globals.Function.Environment.Variables` to use Gemini here too |
 | Raw data | Not persisted | `RawDataBucket` (S3) declared, matching the spec's architecture table -- not yet written to by any handler |
+| Society/RWA + Cedar | Same code, same JSON-file store | Same code, real `SocietiesTable`; Cedar's `authorize()` runs the same either way -- verified against this deployment specifically (see the WASM gotcha below) |
 
 `packages/core/src/db.ts` (the `Store` interface) is what makes this
 possible without touching `HouseholdService` or any route: `JsonDb` and
@@ -110,6 +111,40 @@ to `http://localhost.localstack.cloud:4566`, a DNS name LocalStack provides
 that resolves correctly from both the host and its Lambda containers. This
 was verified working end-to-end (the Step Functions pipeline above
 successfully wrote to DynamoDB from inside a Lambda).
+
+## A real gotcha we hit: Cedar's WASM binary
+
+`packages/core/src/authorization.ts` uses `@cedar-policy/cedar-wasm/nodejs`,
+which loads its `.wasm` binary via `fs.readFileSync(path.join(__dirname, ...))`
+at runtime. esbuild has no static `import` to see there, so bundling it into
+one `api.js` silently drops the binary -- the deployed Lambda 502'd with
+`ENOENT: .../cedar_wasm_bg.wasm` the first time this was deployed here.
+Pointing `CodeUri` at `infra/` (so SAM's esbuild builder could find
+`package.json` and `npm install` the real files for an `External` entry)
+doesn't work either: `@bijli/core`/`@bijli/domain`/`@bijli/server` are
+npm-workspace-linked, not real registry packages, so that install 404s.
+
+The fix, in `deploy-local.sh`: after `samlocal build`, copy the real
+`cedar_wasm_bg.wasm` from the workspace's `node_modules` into each of the
+three function build directories, right beside their bundled JS (all three
+statically import it via `@bijli/core`'s barrel export). A manual step, but
+a small and honest one -- verified by exercising a Cedar-gated route
+(`GET /api/societies/:id/plan`, with and without the manager token) against
+the deployed Lambda, not just a health check.
+
+## Cold starts
+
+`ApiFunction` has a `Warmup` schedule event (EventBridge, `rate(5 minutes)`)
+pinging the function directly -- not through API Gateway, since that would
+exercise the whole Express app for nothing. The handler in `src/api.ts`
+detects a direct EventBridge invoke (`event.source === "aws.events"`) and
+returns immediately, without touching DynamoDB. This keeps one execution
+environment warm for a demo window; it is a demo-time trick, not a
+production answer -- on real AWS, use **Provisioned Concurrency** on
+`ApiFunction` instead (add `AutoPublishAlias` + a
+`AWS::Lambda::ProvisionedConcurrencyConfig` once deploying for real; it
+isn't meaningfully testable against LocalStack, which is why it's
+documented here rather than built into `template.yaml`).
 
 ## Tear down
 

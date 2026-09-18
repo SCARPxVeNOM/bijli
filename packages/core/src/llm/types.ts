@@ -12,9 +12,16 @@ export interface QaContext {
  * always come from the calculators (planService, riskService, cheapHours).
  * The LLM's only job is turning already-decided numbers into words.
  */
+export interface SpeechResult {
+  audioBase64: string;
+  mimeType: string;
+}
+
 export interface LLMProvider {
   name: string;
   readBill(imageBase64: string, mimeType: string): Promise<Partial<Bill>>;
   writeDailyMessage(plan: PlanNumbers, language: Language): Promise<string>;
   answerQuestion(question: string, context: QaContext, language: Language): Promise<string>;
+  /** Voice notes (stretch #5). Optional: only providers with real TTS support implement it. */
+  synthesizeSpeech?(text: string, language: Language): Promise<SpeechResult>;
 }

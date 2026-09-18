@@ -1,9 +1,21 @@
 import { useState } from "react";
+import { Backtest } from "./Backtest";
 import { Chat } from "./Chat";
 import { Dashboard } from "./Dashboard";
 import { Impact } from "./Impact";
+import { OutageMap } from "./OutageMap";
+import { Society } from "./Society";
 
-type Tab = "chat" | "dashboard" | "impact";
+type Tab = "chat" | "dashboard" | "impact" | "backtest" | "outages" | "society";
+
+const TAB_LABELS: Record<Tab, string> = {
+  chat: "Chat",
+  dashboard: "Dashboard",
+  impact: "Impact",
+  backtest: "Backtest",
+  outages: "Outage Map",
+  society: "Society",
+};
 
 export default function App() {
   const [householdId, setHouseholdId] = useState<string | null>(() => localStorage.getItem("bijli.householdId"));
@@ -17,10 +29,21 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "system-ui, sans-serif" }}>
-      <header style={{ background: "#075e54", color: "#fff", padding: "0.7rem 1rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <header
+        style={{
+          background: "#075e54",
+          color: "#fff",
+          padding: "0.7rem 1rem",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "0.5rem",
+        }}
+      >
         <strong>BijliSaathi</strong>
-        <nav style={{ display: "flex", gap: "0.5rem" }}>
-          {(["chat", "dashboard", "impact"] as Tab[]).map((t) => (
+        <nav style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+          {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -29,13 +52,12 @@ export default function App() {
                 color: tab === t ? "#075e54" : "#fff",
                 border: "1px solid #fff",
                 borderRadius: "999px",
-                padding: "0.3rem 0.8rem",
+                padding: "0.3rem 0.7rem",
                 cursor: "pointer",
-                textTransform: "capitalize",
-                fontSize: "0.85rem",
+                fontSize: "0.8rem",
               }}
             >
-              {t}
+              {TAB_LABELS[t]}
             </button>
           ))}
         </nav>
@@ -44,6 +66,9 @@ export default function App() {
         {tab === "chat" && <Chat householdId={householdId} onHouseholdId={updateHouseholdId} />}
         {tab === "dashboard" && <Dashboard householdId={householdId} />}
         {tab === "impact" && <Impact />}
+        {tab === "backtest" && <Backtest />}
+        {tab === "outages" && <OutageMap />}
+        {tab === "society" && <Society />}
       </main>
     </div>
   );

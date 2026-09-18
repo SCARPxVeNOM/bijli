@@ -49,6 +49,19 @@ export interface ApplianceEntry {
   ev?: EvDetails;
 }
 
+export interface SmartMeterReading {
+  date: string; // YYYY-MM-DD
+  kWh: number;
+  /** If set, this reading is for one appliance/circuit, not the whole house. */
+  applianceType?: ApplianceType;
+}
+
+export interface LiveSmartPlugReading {
+  watts: number;
+  applianceType: ApplianceType;
+  timestamp: string;
+}
+
 export interface Household {
   id: string;
   phone: string; // simulated WhatsApp number / chat handle
@@ -59,6 +72,12 @@ export interface Household {
   bill?: Bill;
   createdAt: string;
   conversationState: ConversationState;
+  /** Real daily readings that, when present, replace the rated-power appliance estimate. */
+  smartMeterReadings?: SmartMeterReading[];
+  /** Rooftop solar panel capacity, if the household has one. */
+  rooftopSolarKw?: number;
+  /** Latest reading from a live-metered smart plug (software receiver, stretch #2). */
+  latestSmartPlugReading?: LiveSmartPlugReading;
 }
 
 export type ConversationState =
@@ -168,4 +187,32 @@ export interface PlanNumbers {
   cheapWindow: CheapWindow;
   cutRisk: CutRiskAssessment;
   actions: PlanAction[];
+}
+
+/** An apartment block / RWA: one shared-load plan, staggering member EV charging. */
+export interface Society {
+  id: string;
+  name: string;
+  pincode: string;
+  memberHouseholdIds: string[];
+  sharedLoadLimitKw: number;
+  /** Never sent to clients except the manager's own session -- authorization.ts gates this. */
+  managerToken: string;
+  createdAt: string;
+}
+
+export interface StaggeredChargingSlot {
+  householdId: string;
+  applianceType: ApplianceType;
+  windowStartHour: number;
+  windowEndHour: number;
+  chargerKw: number;
+}
+
+export interface SocietyPlan {
+  societyId: string;
+  date: string;
+  sharedLoadLimitKw: number;
+  slots: StaggeredChargingSlot[];
+  label: DataLabel;
 }

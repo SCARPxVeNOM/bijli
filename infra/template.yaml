@@ -16,6 +16,7 @@ Globals:
         PLANS_TABLE: !Ref PlansTable
         SHIFT_LOGS_TABLE: !Ref ShiftLogsTable
         OUTAGE_REPORTS_TABLE: !Ref OutageReportsTable
+        SOCIETIES_TABLE: !Ref SocietiesTable
         RAW_DATA_BUCKET: !Ref RawDataBucket
         # LocalStack's DNS alias that resolves correctly both from the host
         # and from inside its own Lambda execution containers. Remove this
@@ -80,6 +81,17 @@ Resources:
         - AttributeName: timestamp
           KeyType: RANGE
 
+  SocietiesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
   # --- S3 (spec: "Raw grid and weather data") ---
   RawDataBucket:
     Type: AWS::S3::Bucket
@@ -95,6 +107,7 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Ref PlansTable }
         - DynamoDBCrudPolicy: { TableName: !Ref ShiftLogsTable }
         - DynamoDBCrudPolicy: { TableName: !Ref OutageReportsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref SocietiesTable }
       Events:
         Root:
           Type: Api
@@ -106,11 +119,30 @@ Resources:
           Properties:
             Path: /{proxy+}
             Method: ANY
+        # Cold-start mitigation (Part 11): pings the function directly every
+        # 5 minutes to keep one execution environment warm during a demo
+        # window. SAM wires the EventBridge rule + the Lambda permission for
+        # it automatically. On real AWS, Provisioned Concurrency is the
+        # production-grade answer instead -- this rate-based ping is a
+        # demo-time trick, not something to rely on for production traffic.
+        Warmup:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Enabled: true
     Metadata:
       BuildMethod: esbuild
       BuildProperties:
         EntryPoints: ["api.ts"]
         Target: "node20"
+        # Cedar's WASM loader reads its .wasm binary from disk at runtime
+        # (fs.readFileSync(path.join(__dirname, ...))) -- esbuild can't see
+        # that reference to auto-copy the asset, and CodeUri can't point at
+        # infra/'s package.json (its npm-workspace-linked @bijli/* deps
+        # aren't real registry packages SAM's builder could re-install).
+        # deploy-local.sh copies the real .wasm file into each build output
+        # directory after `samlocal build`, right beside the bundle -- see
+        # its "cedar wasm fixup" step.
 
   # --- Step Functions daily pipeline (spec: "fetch -> forecast -> risk -> plans -> send") ---
   ListHouseholdsFunction:

@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { Bill, Language, PlanNumbers } from "@bijli/domain";
 import { MockLLMProvider } from "./mockProvider.js";
-import type { LLMProvider, QaContext } from "./types.js";
+import type { LLMProvider, QaContext, SpeechResult } from "./types.js";
 
 const LANGUAGE_NAMES: Record<Language, string> = {
   en: "English",
@@ -44,6 +44,26 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
     }
   }
   throw lastErr;
+}
+
+/** Gemini TTS returns raw PCM (16-bit, mono); wrap it in a WAV header so browsers can play it directly. */
+function pcmToWav(base64Pcm: string, sampleRate: number): string {
+  const pcm = Buffer.from(base64Pcm, "base64");
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28); // byte rate (16-bit mono)
+  header.writeUInt16LE(2, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]).toString("base64");
 }
 
 /**
@@ -128,5 +148,25 @@ export class GeminiLLMProvider implements LLMProvider {
     } catch {
       return this.fallback.answerQuestion(question, context, language);
     }
+  }
+
+  /** Voice notes (stretch #5): real Gemini TTS, no browser-speech fallback -- if this throws, the route omits the "Listen" option rather than faking audio. */
+  async synthesizeSpeech(text: string, language: Language): Promise<SpeechResult> {
+    const ttsModel = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
+    const response = await withRetry(() =>
+      this.ai.models.generateContent({
+        model: ttsModel,
+        contents: `Say this in ${LANGUAGE_NAMES[language]}, in a warm, clear voice: ${text}`,
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } },
+        },
+      })
+    );
+    const inline = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+    if (!inline?.data) throw new Error("No audio returned from Gemini TTS");
+    const rateMatch = /rate=(\d+)/.exec(inline.mimeType ?? "");
+    const sampleRate = rateMatch ? Number(rateMatch[1]) : 24000;
+    return { audioBase64: pcmToWav(inline.data, sampleRate), mimeType: "audio/wav" };
   }
 }

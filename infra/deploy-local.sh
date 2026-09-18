@@ -27,6 +27,17 @@ echo "    LocalStack is up."
 echo "==> Building the Lambda functions (samlocal build)"
 samlocal build --template template.yaml
 
+echo "==> Cedar wasm fixup"
+# Cedar's Node bindings load their .wasm binary via fs.readFileSync at
+# runtime, relative to their own module -- esbuild has no static import to
+# see, so it can't auto-copy that asset into the bundle. Every function
+# imports @bijli/core's barrel (which pulls in authorization.ts), so all
+# three need the real .wasm file placed right beside their bundled JS.
+CEDAR_WASM_SRC="$ROOT_DIR/node_modules/@cedar-policy/cedar-wasm/nodejs/cedar_wasm_bg.wasm"
+for fn in ApiFunction ListHouseholdsFunction GeneratePlanFunction; do
+  cp "$CEDAR_WASM_SRC" "$SCRIPT_DIR/.aws-sam/build/$fn/cedar_wasm_bg.wasm"
+done
+
 echo "==> Deploying the stack to LocalStack (samlocal deploy)"
 samlocal deploy \
   --stack-name "$STACK_NAME" \

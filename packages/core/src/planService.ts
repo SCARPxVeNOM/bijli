@@ -1,4 +1,4 @@
-import { APPLIANCE_RATINGS } from "@bijli/data";
+import { APPLIANCE_RATINGS, computeEffectiveRates } from "@bijli/data";
 import type { TariffPlan } from "@bijli/data";
 import type { ApplianceEntry, ApplianceShare, CheapWindow, PlanAction } from "@bijli/domain";
 import { planEvCharging } from "./evPlanner.js";
@@ -21,11 +21,10 @@ export function buildDailyPlan(
   appliances: ApplianceEntry[],
   shares: ApplianceShare[],
   tariff: TariffPlan,
-  cheapWindow: CheapWindow
+  cheapWindow: CheapWindow,
+  rooftopSolarKw?: number
 ): PlanAction[] {
-  const normalRate = tariff.normalRatePerKWh;
-  const peakRate = normalRate * (1 + tariff.peakSurchargePercent / 100);
-  const solarRate = normalRate * (1 - tariff.solarDiscountPercent / 100);
+  const { normalRate, peakRate, solarRate } = computeEffectiveRates(tariff);
 
   const candidates: PlanAction[] = [];
 
@@ -33,7 +32,7 @@ export function buildDailyPlan(
     const rating = APPLIANCE_RATINGS[entry.type];
 
     if (entry.type === "ev_scooter" || entry.type === "ev_car") {
-      const action = planEvCharging(entry, tariff, cheapWindow);
+      const action = planEvCharging(entry, tariff, cheapWindow, rooftopSolarKw);
       if (action) candidates.push(action);
       continue;
     }
@@ -43,10 +42,15 @@ export function buildDailyPlan(
     const dailyKWh = dailyKWhFor(entry, shares);
 
     if (rating.shiftability === "yes") {
-      const savings = dailyKWh * (peakRate - solarRate);
+      // Rooftop-solar homes (stretch #6): if the panel covers this appliance's
+      // draw, running it in the solar window is free, not just ToD-cheap.
+      const ownSolarCoversIt = (rooftopSolarKw ?? 0) * 1000 >= rating.ratedPowerWatts;
+      const savings = dailyKWh * (peakRate - (ownSolarCoversIt ? 0 : solarRate));
       candidates.push({
         applianceType: entry.type,
-        action: `${rating.displayName}: run ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00, in the cheap window`,
+        action: ownSolarCoversIt
+          ? `${rating.displayName}: run ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00 on your own rooftop solar, free`
+          : `${rating.displayName}: run ${cheapWindow.startHour}:00-${cheapWindow.endHour}:00, in the cheap window`,
         windowStartHour: cheapWindow.startHour,
         windowEndHour: cheapWindow.endHour,
         estSavingsRupees: Math.round(savings),

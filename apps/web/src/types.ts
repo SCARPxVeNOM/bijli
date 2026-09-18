@@ -66,6 +66,18 @@ export interface Bill {
   label: DataLabel;
 }
 
+export interface SmartMeterReading {
+  date: string;
+  kWh: number;
+  applianceType?: ApplianceType;
+}
+
+export interface LiveSmartPlugReading {
+  watts: number;
+  applianceType: ApplianceType;
+  timestamp: string;
+}
+
 export interface Household {
   id: string;
   phone: string;
@@ -76,6 +88,9 @@ export interface Household {
   bill?: Bill;
   createdAt: string;
   conversationState: ConversationState;
+  smartMeterReadings?: SmartMeterReading[];
+  rooftopSolarKw?: number;
+  latestSmartPlugReading?: LiveSmartPlugReading;
 }
 
 export interface ApplianceShare {
@@ -134,4 +149,59 @@ export interface SavingsSummary {
 export interface ImpactTotals extends SavingsSummary {
   householdCount: number;
   projectedNationalKWhPerDay: { value: number; label: DataLabel; note?: string };
+}
+
+export interface BacktestResult {
+  scenario: {
+    date: string;
+    state: string;
+    peakDemandMetGW: number;
+    eveningDeficitGW: number;
+    deficitWindow: { startHour: number; endHour: number };
+    label: DataLabel;
+    note: string;
+  };
+  cheapWindow: CheapWindow;
+  cutRisk: CutRiskAssessment;
+  hourlyDeficitGW: number[];
+}
+
+export interface OutageReportWithLocation {
+  householdId: string;
+  pincode: string;
+  timestamp: string;
+  lat: number;
+  lon: number;
+  city: string;
+}
+
+export interface Society {
+  id: string;
+  name: string;
+  pincode: string;
+  memberHouseholdIds: string[];
+  sharedLoadLimitKw: number;
+  managerToken: string;
+  createdAt: string;
+}
+
+export interface StaggeredChargingSlot {
+  householdId: string;
+  applianceType: ApplianceType;
+  windowStartHour: number;
+  windowEndHour: number;
+  chargerKw: number;
+}
+
+export interface SocietyPlan {
+  societyId: string;
+  date: string;
+  sharedLoadLimitKw: number;
+  slots: StaggeredChargingSlot[];
+  label: DataLabel;
+}
+
+export interface SpeechResult {
+  audioBase64: string;
+  mimeType: string;
 }

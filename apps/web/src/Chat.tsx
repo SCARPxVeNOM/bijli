@@ -135,8 +135,9 @@ export function Chat({ householdId, onHouseholdId }: { householdId: string | nul
         )}
         {household.conversationState === "ask_appliances" && (
           <AppliancesStep
-            onSubmit={async (appliances) => {
+            onSubmit={async (appliances, rooftopSolarKw) => {
               push([{ from: "user", text: `Appliances: ${appliances.filter((a) => a.present).map((a) => APPLIANCE_LABELS[a.type]).join(", ")}` }]);
+              if (rooftopSolarKw > 0) await api.setRooftopSolar(household.id, rooftopSolarKw);
               const { plan: firstPlan } = await api.setAppliances(household.id, appliances);
               const h = await api.getHousehold(household.id);
               setHousehold(h);
@@ -258,8 +259,9 @@ function BillConfirmStep({ bill, onConfirm }: { bill: Bill; onConfirm: (correcti
   );
 }
 
-function AppliancesStep({ onSubmit }: { onSubmit: (appliances: ApplianceEntry[]) => void }) {
+function AppliancesStep({ onSubmit }: { onSubmit: (appliances: ApplianceEntry[], rooftopSolarKw: number) => void }) {
   const [selected, setSelected] = useState<Set<ApplianceType>>(new Set());
+  const [rooftopSolarKw, setRooftopSolarKw] = useState("0");
   const [ev, setEv] = useState<EvDetails>({
     vehicleType: "e_scooter",
     chargerType: "Standard",
@@ -291,7 +293,7 @@ function AppliancesStep({ onSubmit }: { onSubmit: (appliances: ApplianceEntry[])
       present: selected.has(type),
       ev: (type === "ev_scooter" || type === "ev_car") && selected.has(type) ? { ...ev, vehicleType: type === "ev_car" ? "car" : "e_scooter" } : undefined,
     }));
-    onSubmit(appliances);
+    onSubmit(appliances, Number(rooftopSolarKw) || 0);
   }
 
   return (
@@ -344,6 +346,20 @@ function AppliancesStep({ onSubmit }: { onSubmit: (appliances: ApplianceEntry[])
         </div>
       )}
 
+      <div style={{ marginTop: "0.6rem" }}>
+        <label style={{ fontSize: "0.8rem", color: "#333" }}>
+          Rooftop solar? Panel capacity (kW, 0 if none):{" "}
+          <input
+            style={{ ...styles.input, width: "4rem", display: "inline-block" }}
+            type="number"
+            min="0"
+            step="0.5"
+            value={rooftopSolarKw}
+            onChange={(e) => setRooftopSolarKw(e.target.value)}
+          />
+        </label>
+      </div>
+
       <button style={{ ...styles.primaryBtn, marginTop: "0.6rem" }} onClick={submit} disabled={selected.size === 0}>
         Get my plan
       </button>
@@ -368,6 +384,20 @@ function OnboardedControls({
 }) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
+  const [speechState, setSpeechState] = useState<"idle" | "loading" | "unavailable">("idle");
+
+  async function listen() {
+    setSpeechState("loading");
+    try {
+      const { audioBase64, mimeType } = await api.getPlanSpeech(householdId);
+      const bytes = Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+      new Audio(url).play();
+      setSpeechState("idle");
+    } catch {
+      setSpeechState("unavailable");
+    }
+  }
 
   async function ask() {
     if (!question.trim()) return;
@@ -380,9 +410,16 @@ function OnboardedControls({
 
   return (
     <div style={styles.controls}>
-      <div style={{ fontSize: "0.8rem", color: "#666" }}>
-        Tonight's cut risk: <b>{plan.cutRisk.level.toUpperCase()}</b>
-        <DataLabelBadge label={plan.cutRisk.label} />
+      <div style={{ fontSize: "0.8rem", color: "#666", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <span>
+          Tonight's cut risk: <b>{plan.cutRisk.level.toUpperCase()}</b>
+          <DataLabelBadge label={plan.cutRisk.label} />
+        </span>
+        {speechState !== "unavailable" && (
+          <button style={styles.chipBtn} disabled={speechState === "loading"} onClick={listen}>
+            🔊 {speechState === "loading" ? "Loading..." : "Listen"}
+          </button>
+        )}
       </div>
       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", margin: "0.4rem 0" }}>
         {plan.actions.map((a) => (

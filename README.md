@@ -70,13 +70,28 @@ infra/            SAM template + Lambda handlers, for the LocalStack track
 | --- | --- |
 | `householdService.ts` | Onboarding orchestration (#1), daily pipeline |
 | `weather.ts` | Real Open-Meteo forecast (feeds #4, #5) |
-| `applianceEstimator.ts` | Appliance spending breakdown (#3) |
+| `applianceEstimator.ts` | Appliance spending breakdown (#3), real smart-meter readings when present |
 | `cheapHours.ts` | Cheap & clean hours (#4) |
 | `riskService.ts` | Cut-risk alert (#5) |
-| `evPlanner.ts` + `planService.ts` | Daily shift plan + EV module (#6) |
-| `llm/*` | Bill reader (#2), message writer, ask-anytime (#7) |
+| `evPlanner.ts` + `planService.ts` | Daily shift plan + EV module (#6), rooftop-solar self-consumption |
+| `llm/*` | Bill reader (#2), message writer, ask-anytime (#7), voice-note TTS |
 | `savings.ts` | Savings/impact tracker + public counter (#8, #9) |
 | `db.ts` / `dynamoDbStore.ts` | The `Store` interface, and its two implementations |
+| `backtest.ts` | The May 2026 heatwave backtest, run through the real pipeline |
+| `societyService.ts` | Society/RWA mode: staggered EV charging under a shared load limit |
+| `authorization.ts` | Cedar policies gating the society routes |
+
+### All 7 stretch features, and what's real about each
+
+| # | Stretch feature | Status |
+| --- | --- | --- |
+| 1 | "Power's out" reports + live map | Built. Real reports, real pincode lat/lon, plotted on a plain grid (not a fabricated India outline) — `OutageMap.tsx`, `GET /api/outages` |
+| 2 | Live-metered smart plug | Software receiver only (no hardware here) — `POST /households/:id/smart-plug/reading`, a Dashboard tile. Untested end-to-end without a real device |
+| 3 | Society / RWA mode | Built. Real greedy scheduler staggers member EV charging under a shared kW limit — `societyService.ts`, `Society.tsx` |
+| 4 | Smart meter data import | Built. Daily (or per-appliance) readings replace the rated-power estimate, flip to `real` — `POST /households/:id/smart-meter`, Dashboard CSV upload |
+| 5 | Voice notes | Built with real Gemini TTS (`gemini-2.5-flash-preview-tts`, wrapped as a playable WAV) — `POST /households/:id/plan/speech`, the Chat's 🔊 Listen button |
+| 6 | Rooftop-solar homes | Built. Panel capacity reframes in-window appliance/EV actions as free self-consumption — the Chat's appliances step |
+| 7 | Strands agent + Cedar | Both built. Cedar (`@cedar-policy/cedar-wasm`) gates the Society routes for real; Strands (`@strands-agents/sdk`, TypeScript preview) is an opt-in alternate ask-anytime agent behind `STRANDS_QA=true`, tool-calling real Gemini — falls back to the direct call on any error, since the SDK is explicitly experimental |
 
 **The one rule the code follows throughout:** the calculator writes numbers
 (`planService`, `riskService`, `cheapHours`, `evPlanner`), the LLM only
@@ -90,11 +105,17 @@ already-decided data.
 spec's "judges forgive estimates, they punish fake precision" rule. The
 dashboard and impact page render these as coloured badges.
 
-### Swapping in real data before a demo
+### Real tariff data
 
-- `packages/data/tariffs.ts` — the ToD hours/rates are **illustrative
-  placeholders** inside the legal ToD band. Replace with your demo state's
-  verified tariff order and flip `label` to `"real"`.
+`packages/data/tariffs.ts` now carries **sourced, real numbers**, not
+placeholders: MSEDCL's (Maharashtra) actual FY 2025-26 solar-hours rebate
+(₹0.80/kWh, 9am–5pm) and peak surcharge (20%, 5pm–midnight), and BSES/DERC's
+(Delhi) real slab rates and ToD rule (solar ≥20% cheaper, peak ≥10% dearer).
+Both cite their source in the file. The one honest simplification kept:
+Indian domestic billing is telescopic (multiple slabs), and this uses the
+marginal rate at the typical urban household's slab rather than a full bill
+reconstruction — called out in a comment, not hidden.
+
 - `packages/data/pincodes.ts` — extend with your demo pincodes.
 - `packages/data/gridFacts.ts` — the national figures are the spec's own
   cited numbers (Energetica India / Reuters); the May 2026 heatwave backtest
@@ -116,6 +137,29 @@ Set `LLM_PROVIDER=gemini|anthropic|mock` to force a choice. All three
 implement the identical `readBill` / `writeDailyMessage` / `answerQuestion`
 contract, so switching providers never touches `planService`, `riskService`,
 or any route.
+
+Two more, both opt-in:
+
+- **Voice notes**: Gemini only, real TTS (`GEMINI_TTS_MODEL`, default
+  `gemini-2.5-flash-preview-tts`). Mock/Anthropic don't implement
+  `synthesizeSpeech`, so the route returns 501 and the Chat's Listen button
+  simply doesn't render — never fake audio.
+- **`STRANDS_QA=true`**: routes ask-anytime through AWS's Strands Agents SDK
+  (TypeScript preview) instead of the direct Gemini call, giving the agent
+  explicit `lookupPlan`/`lookupTariff` tools. Falls back to the direct call
+  automatically on any error, since the SDK is experimental — never the
+  default.
+
+## Cold starts
+
+Only a real concern for the Lambda track (`infra/`), not Railway (a
+long-running container). `infra/template.yaml`'s `ApiFunction` has an
+EventBridge `Schedule` event pinging it directly every 5 minutes; the
+handler (`infra/src/api.ts`) detects that direct ping and returns
+immediately, without touching Express or DynamoDB. This is a demo-time
+mitigation — the real production answer on actual AWS is Provisioned
+Concurrency, noted in `infra/README.md` rather than built (it isn't
+meaningfully testable against LocalStack).
 
 ## What's simplified vs. the full spec
 
@@ -141,10 +185,12 @@ or any route.
   simple.
 - **Weekly savings report → always-on dashboard.** Instead of a scheduled
   weekly message, `/households/:id/savings` is queryable anytime.
-- **Stretch features not built:** society/RWA mode, live-metered smart plug,
-  smart-meter import, voice notes, rooftop-solar plans, Strands Agents SDK,
-  Cedar. The "power's out" report + impact counter (the highest-priority
-  stretch items) *are* built.
+- **All 7 stretch features are built** (see the table above) — the only
+  gap is the live-metered smart plug's *hardware side*, since there's no
+  physical smart plug attached to this machine; its software receiver
+  endpoint is real and ready.
+- **Backup video** is the one explicit exclusion from this round, at the
+  user's request.
 
 ## Deploying to Railway
 
