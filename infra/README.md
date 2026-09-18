@@ -7,6 +7,12 @@ It reuses the exact same Express app and `@bijli/core` business logic as the
 Railway deployment; only the backing store changes (DynamoDB instead of a
 JSON file) and the transport changes (API Gateway instead of a raw socket).
 
+**Not public.** Everything here is bound to `localhost:4566` on whichever
+machine runs `docker compose` -- there is no public URL, and none of this is
+reachable from another machine or the internet. For a public link, use the
+Railway deployment (see the root `README.md`); this track exists to prove
+out the spec's real AWS architecture locally, not to serve traffic.
+
 ## One-time setup
 
 ```bash

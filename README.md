@@ -18,8 +18,9 @@ appliance to shift, to which hour, and how much it saves. Full product spec:
    reading, message writing, and Q&A.
 3. **The spec's real AWS architecture, via SAM CLI + LocalStack**
    (`infra/`) — API Gateway, Lambda, Step Functions, DynamoDB, EventBridge,
-   S3, running on your machine with no AWS account, card, or bill. See
-   `infra/README.md`.
+   S3, running on your machine with no AWS account, card, or bill. **Not
+   public** — bound to `localhost:4566`, with no URL reachable from another
+   machine. See `infra/README.md`.
 
 All three share `packages/core`'s business logic untouched; only the store
 (`JsonDb` vs `DynamoDbStore`) and transport (raw HTTP vs API Gateway) differ.
