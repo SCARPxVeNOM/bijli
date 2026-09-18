@@ -1,0 +1,17 @@
+{
+  "name": "bijlisaathi",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev -w @bijli/server",
+    "dev:web": "npm run dev -w @bijli/web",
+    "build": "tsc -b apps/server && npm run build -w @bijli/web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

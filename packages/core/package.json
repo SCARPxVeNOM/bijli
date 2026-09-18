@@ -1,0 +1,13 @@
+{
+  "name": "@bijli/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@bijli/domain": "*",
+    "@bijli/data": "*",
+    "@anthropic-ai/sdk": "^0.32.0",
+    "nanoid": "^5.0.7"
+  }
+}
