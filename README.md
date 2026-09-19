@@ -163,17 +163,20 @@ meaningfully testable against LocalStack).
 
 ## What's simplified vs. the full spec
 
-- **Real WhatsApp, via Twilio's free Sandbox** (see below) — not a
+- **Real WhatsApp, via Twilio's free trial** (see below) — not a
   simulation. `apps/web/src/Chat.tsx` still exists as a second, buttons-based
   channel for demoing without a phone in hand; both talk to the same
   `HouseholdService`.
   - Confirmed risk from the spec: Meta's own WhatsApp Cloud API needs
-    business verification and caps unverified numbers at 5 recipients —
-    unworkable for "a judge scans a QR code." Twilio's Sandbox has no such
-    cap: anyone can join instantly by texting a join code, no approval, no
-    card. The tradeoff: Sandbox messages carry a one-time "join" step and a
-    Twilio disclaimer prefix — the real WhatsApp Business Account path
-    (`infra/README.md`'s "Path to real AWS") removes both once verified.
+    business verification and caps unverified numbers at 5 recipients.
+    Twilio's older open-join Sandbox avoided that entirely, but Twilio has
+    since replaced it with a stricter trial flow that carries the *same*
+    5-verified-recipient cap — so for now, either path needs each demo
+    phone (yours, a backup phone) pre-verified in the console first, a
+    30-second step. The upside kept: Twilio's setup is still faster (no
+    business-verification wait) and the webhook/conversation code is
+    identical either way, so upgrading to a paid Twilio number later, or
+    Meta's Cloud API, is a config change, not a rewrite.
 - **DynamoDB → JSON file (Railway) / real DynamoDB (infra/LocalStack).**
   `packages/core/src/db.ts` defines the `Store` interface; `JsonDb`
   implements it for Railway, `DynamoDbStore` implements it for `infra/`.
@@ -198,39 +201,46 @@ meaningfully testable against LocalStack).
 - **Backup video** is the one explicit exclusion from this round, at the
   user's request.
 
-## Real WhatsApp, in 5 minutes (Twilio Sandbox)
+## Real WhatsApp, in 5 minutes (Twilio trial)
 
 `apps/server/src/whatsapp.ts` + the `POST /whatsapp/webhook` route is a real
 WhatsApp bot, not the `Chat.tsx` simulation — it runs the exact same
 onboarding → daily plan → ask-anything → DONE → OUTAGE flow as text messages.
+Replies go out via Twilio's REST Messages API (not a TwiML webhook response —
+Twilio's current trial flow doesn't honor that), so `TWILIO_ACCOUNT_SID` and
+`TWILIO_AUTH_TOKEN` are required for any reply, not just bill photos.
 
 1. Sign up free at [twilio.com/try-twilio](https://www.twilio.com/try-twilio)
-   (no credit card). In the Console, go to **Messaging → Try it out → Send a
-   WhatsApp message** to activate the Sandbox — it gives you a Twilio
-   WhatsApp number and a `join <your-code>` phrase.
-2. From your own phone's WhatsApp, text `join <your-code>` to that number.
-   You're now connected to the Sandbox — any phone can do this in seconds,
-   which is exactly the "unknown judge" demo scenario.
-3. In the Console's Sandbox settings, set **"When a message comes in"** to
-   `https://<your-railway-server-url>/whatsapp/webhook` (POST). Railway
-   already gives you a public HTTPS URL, so no ngrok/tunnel is needed once
-   deployed.
-4. Text "Hi" to the Sandbox number. You'll get the real onboarding flow.
+   (no credit card). In the Console: **Messaging → Try it out → Send a
+   WhatsApp message**. Your own signup number is auto-verified; verify up to
+   4 more (e.g. a backup demo phone) from the same screen — each just needs
+   an OTP typed in, no approval wait.
+2. Send the prepopulated `join <code>` message (or scan the QR code) from
+   each verified phone to activate WhatsApp for that number.
+3. On that page, under **Inbound → Auto-Reply settings**, choose **Custom**
+   and set the webhook to `https://<your-railway-server-url>/whatsapp/webhook`
+   (POST). Railway already gives you a public HTTPS URL, so no ngrok/tunnel
+   is needed once deployed.
+4. Text "Hi" from a verified phone. You'll get the real onboarding flow.
 
-That's the whole bot working with **zero server-side secrets** — the webhook
-replies synchronously as TwiML, no Twilio API call needed. Two optional env
-vars on `bijli-server` unlock more:
-- `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` — lets the bot download bill
-  *photos* (Twilio's media URLs are Basic-Auth protected); without them it
-  just asks for bill figures as text instead.
-- `TWILIO_WHATSAPP_FROM=whatsapp:+14155238886` (your Sandbox number) — lets
+Two more env vars on `bijli-server` unlock more:
+- `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (required, see above) — also
+  lets the bot download bill *photos* (Twilio's media URLs are Basic-Auth
+  protected); without them set, inbound messages still update household
+  state, they just get no reply and no photo support.
+- `TWILIO_WHATSAPP_FROM=whatsapp:+14155238886` (your trial number) — lets
   the existing 6pm `node-cron` job (`apps/server/src/index.ts`) proactively
-  push each household's plan out over WhatsApp, not just generate it.
+  push each household's plan out over WhatsApp, not just generate it
+  (replies to an inbound message don't need this — they reuse the number
+  the inbound message arrived on).
 
-Known Sandbox limitations (all lifted once you apply for a real WhatsApp
-Business Account, unrelated to this codebase): every recipient must text
-"join" once first, sessions expire after 24h of inactivity, and Twilio
-prefixes a one-time sandbox disclaimer on the first reply.
+Known trial limitations (all lifted once you upgrade the Twilio account or
+move to a real WhatsApp Business Account, unrelated to this codebase): only
+up to 5 verified phones can receive messages at all, every recipient must
+send "join" once first, sessions expire after 24h of inactivity, and Twilio
+prefixes a one-time trial disclaimer on the first reply. For a live demo,
+pre-verify your own phone and a backup phone in advance rather than relying
+on a judge's unregistered number.
 
 ## Deploying to Railway
 
