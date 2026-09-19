@@ -1,10 +1,11 @@
-// Real WhatsApp channel via Twilio's free WhatsApp Sandbox. Twilio calls our
-// webhook synchronously on every inbound message and we reply in the same
-// HTTP response as TwiML -- no outbound API call, no credentials needed for
-// plain text. The only thing that needs TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN
-// is fetching a bill *photo* (Twilio's MediaUrl0 is Basic-Auth protected);
-// without those two env vars set, the bot still works end to end, it just
-// asks for bill figures as text instead of a photo.
+// Real WhatsApp channel via Twilio's free WhatsApp trial. Twilio calls our
+// webhook on every inbound message; we compute the reply here and the route
+// handler in app.ts sends it back out via the REST Messages API. (Twilio's
+// current trial flow no longer honors a TwiML reply written into the
+// webhook's HTTP response -- their own docs say so -- so both
+// TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required for any reply, not
+// just for bill photos. Without them, inbound messages still update
+// household state but nothing gets sent back.)
 //
 // This mirrors the exact same conversation states the web Chat.tsx uses
 // (Household.conversationState) and calls straight into HouseholdService --
@@ -208,30 +209,20 @@ function parseManualBill(text: string): { unitsKWh: number; amountRupees: number
   return { unitsKWh: Number(m[1]), amountRupees: Number(m[2]) };
 }
 
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-/** Wraps a reply as the minimal TwiML Twilio expects back from the webhook. */
-export function buildTwiMlReply(text: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(text)}</Message></Response>`;
-}
-
-/** Proactively pushes a message to a WhatsApp number via Twilio's REST API (used for the
- * daily 6pm plan push). No-ops with a log line if Twilio credentials aren't configured --
- * the web/API channels still work fine without this. */
-export async function sendWhatsAppMessage(to: string, body: string): Promise<void> {
+/** Sends a WhatsApp message via Twilio's REST API. Used both for replying to an inbound
+ * message (Twilio's newer trial flow no longer honors a TwiML reply body -- see
+ * "Direct TwiML XML is not supported during response" in their trial docs, so a reply
+ * is now itself an outbound REST send) and for the proactive daily push. `from` should
+ * be the inbound request's own `To` field when replying (the number that received the
+ * message); falls back to TWILIO_WHATSAPP_FROM for unprompted sends. No-ops with a log
+ * line if credentials aren't configured -- the web/API channels still work without this. */
+export async function sendWhatsAppMessage(to: string, body: string, from?: string): Promise<boolean> {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_WHATSAPP_FROM;
-  if (!sid || !token || !from) {
-    console.log(`[whatsapp] Twilio not configured, skipping proactive push to ${to}`);
-    return;
+  const sender = from || process.env.TWILIO_WHATSAPP_FROM;
+  if (!sid || !token || !sender) {
+    console.log(`[whatsapp] Twilio not configured, skipping send to ${to}`);
+    return false;
   }
   const auth = Buffer.from(`${sid}:${token}`).toString("base64");
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
@@ -240,7 +231,11 @@ export async function sendWhatsAppMessage(to: string, body: string): Promise<voi
       Authorization: `Basic ${auth}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: new URLSearchParams({ From: from, To: to, Body: body }),
+    body: new URLSearchParams({ From: sender, To: to, Body: body }),
   });
-  if (!res.ok) console.error(`[whatsapp] proactive push to ${to} failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    console.error(`[whatsapp] send to ${to} failed: ${res.status} ${await res.text()}`);
+    return false;
+  }
+  return true;
 }
