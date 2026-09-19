@@ -49,6 +49,12 @@ export class HouseholdService {
     return h;
   }
 
+  /** Finds the household tied to a real phone number (e.g. "whatsapp:+91..."), for the WhatsApp channel. */
+  async findHouseholdByPhone(phone: string): Promise<Household | undefined> {
+    const all = await this.db.listHouseholds();
+    return all.find((h) => h.phone === phone);
+  }
+
   async setLanguage(id: string, language: Language): Promise<Household> {
     const h = await this.getHousehold(id);
     h.language = language;

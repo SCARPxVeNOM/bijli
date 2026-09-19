@@ -4,6 +4,7 @@ import "dotenv/config";
 import cron from "node-cron";
 import { HouseholdService, JsonDb, SocietyService } from "@bijli/core";
 import { buildApp } from "./app.js";
+import { sendWhatsAppMessage } from "./whatsapp.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4000);
@@ -24,8 +25,12 @@ app.listen(PORT, () => {
 cron.schedule("0 18 * * *", async () => {
   const all = await db.listHouseholds();
   for (const h of all) {
-    if (h.conversationState === "onboarded") {
-      await households.generateDailyPlan(h.id).catch((err) => console.error(`Plan generation failed for ${h.id}:`, err));
+    if (h.conversationState !== "onboarded") continue;
+    try {
+      const plan = await households.generateDailyPlan(h.id);
+      if (h.phone.startsWith("whatsapp:")) await sendWhatsAppMessage(h.phone, plan.messageText);
+    } catch (err) {
+      console.error(`Plan generation failed for ${h.id}:`, err);
     }
   }
 });
