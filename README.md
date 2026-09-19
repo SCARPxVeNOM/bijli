@@ -163,20 +163,22 @@ meaningfully testable against LocalStack).
 
 ## What's simplified vs. the full spec
 
-- **Real WhatsApp, via Twilio's free trial** (see below) — not a
-  simulation. `apps/web/src/Chat.tsx` still exists as a second, buttons-based
-  channel for demoing without a phone in hand; both talk to the same
-  `HouseholdService`.
-  - Confirmed risk from the spec: Meta's own WhatsApp Cloud API needs
-    business verification and caps unverified numbers at 5 recipients.
-    Twilio's older open-join Sandbox avoided that entirely, but Twilio has
-    since replaced it with a stricter trial flow that carries the *same*
-    5-verified-recipient cap — so for now, either path needs each demo
-    phone (yours, a backup phone) pre-verified in the console first, a
-    30-second step. The upside kept: Twilio's setup is still faster (no
-    business-verification wait) and the webhook/conversation code is
-    identical either way, so upgrading to a paid Twilio number later, or
-    Meta's Cloud API, is a config change, not a rewrite.
+- **WhatsApp → web chat, still, for the live demo** — same as before, but
+  worth being precise about why. `apps/server/src/whatsapp.ts` is a real,
+  deployed Twilio WhatsApp webhook (see below): it receives real inbound
+  WhatsApp messages, runs the real `HouseholdService` conversation state
+  machine, and was verified live end-to-end during development. What
+  doesn't work on Twilio's **free trial** specifically is the *reply*: their
+  trial account requires every outbound message (including replies to an
+  inbound one) to use a pre-approved Content Template, and the Content API
+  needed to even list those templates is itself locked behind a paid
+  upgrade ("This feature is not available on a Trial account" — confirmed
+  live against this account). So inbound WhatsApp messages update real
+  household state, but dynamic reply text (the actual plan, tariff figures,
+  Q&A answers) can't go back out without either paying to leave Twilio's
+  trial or rebuilding on Meta's Cloud API instead — both out of scope for
+  this round. `apps/web/src/Chat.tsx` is the fully-working WhatsApp-style
+  channel used for the demo.
 - **DynamoDB → JSON file (Railway) / real DynamoDB (infra/LocalStack).**
   `packages/core/src/db.ts` defines the `Store` interface; `JsonDb`
   implements it for Railway, `DynamoDbStore` implements it for `infra/`.
@@ -201,46 +203,39 @@ meaningfully testable against LocalStack).
 - **Backup video** is the one explicit exclusion from this round, at the
   user's request.
 
-## Real WhatsApp, in 5 minutes (Twilio trial)
+## The Twilio WhatsApp webhook (built, reachable, replies blocked on trial)
 
 `apps/server/src/whatsapp.ts` + the `POST /whatsapp/webhook` route is a real
-WhatsApp bot, not the `Chat.tsx` simulation — it runs the exact same
-onboarding → daily plan → ask-anything → DONE → OUTAGE flow as text messages.
-Replies go out via Twilio's REST Messages API (not a TwiML webhook response —
-Twilio's current trial flow doesn't honor that), so `TWILIO_ACCOUNT_SID` and
-`TWILIO_AUTH_TOKEN` are required for any reply, not just bill photos.
+integration, not a mock — it runs the exact same onboarding → daily plan →
+ask-anything → DONE → OUTAGE state machine as `Chat.tsx`, driven by inbound
+WhatsApp text instead of button taps, and is live at
+`https://bijli-server-production.up.railway.app/whatsapp/webhook`.
 
-1. Sign up free at [twilio.com/try-twilio](https://www.twilio.com/try-twilio)
-   (no credit card). In the Console: **Messaging → Try it out → Send a
-   WhatsApp message**. Your own signup number is auto-verified; verify up to
-   4 more (e.g. a backup demo phone) from the same screen — each just needs
-   an OTP typed in, no approval wait.
-2. Send the prepopulated `join <code>` message (or scan the QR code) from
-   each verified phone to activate WhatsApp for that number.
-3. On that page, under **Inbound → Auto-Reply settings**, choose **Custom**
-   and set the webhook to `https://<your-railway-server-url>/whatsapp/webhook`
-   (POST). Railway already gives you a public HTTPS URL, so no ngrok/tunnel
-   is needed once deployed.
-4. Text "Hi" from a verified phone. You'll get the real onboarding flow.
+What's confirmed working, tested against a real Twilio trial account:
+- Twilio → our webhook: inbound messages arrive, get parsed (`From`, `Body`,
+  `MediaUrl0` for bill photos), and correctly update real household state.
+- Our webhook → Twilio: replies go out via the REST Messages API (not a
+  TwiML webhook response — Twilio's current trial flow silently drops
+  that), using the inbound request's own `To` as our `From`.
 
-Two more env vars on `bijli-server` unlock more:
-- `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` (required, see above) — also
-  lets the bot download bill *photos* (Twilio's media URLs are Basic-Auth
-  protected); without them set, inbound messages still update household
-  state, they just get no reply and no photo support.
-- `TWILIO_WHATSAPP_FROM=whatsapp:+14155238886` (your trial number) — lets
-  the existing 6pm `node-cron` job (`apps/server/src/index.ts`) proactively
-  push each household's plan out over WhatsApp, not just generate it
-  (replies to an inbound message don't need this — they reuse the number
-  the inbound message arrived on).
+What's blocked, specifically on Twilio's **free trial** tier: sending the
+*reply itself* fails with `21654 ContentSid Required` — trial accounts must
+use a pre-approved Content Template for every outbound message, and the
+Content API to inspect or pick one is itself paywalled ("not available on a
+Trial account"). This is a platform restriction, not a bug here; it lifts
+the moment the Twilio account is upgraded off trial (standard WhatsApp
+session-message rules apply to paid accounts — freeform replies within 24h
+of an inbound message need no template). Until then, `Chat.tsx` is the
+channel used for demos.
 
-Known trial limitations (all lifted once you upgrade the Twilio account or
-move to a real WhatsApp Business Account, unrelated to this codebase): only
-up to 5 verified phones can receive messages at all, every recipient must
-send "join" once first, sessions expire after 24h of inactivity, and Twilio
-prefixes a one-time trial disclaimer on the first reply. For a live demo,
-pre-verify your own phone and a backup phone in advance rather than relying
-on a judge's unregistered number.
+To pick this back up later: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` env
+vars on `bijli-server` are already set. Either add billing to the Twilio
+account (small pay-as-you-go cost per message, no subscription), or port
+`sendWhatsAppMessage`/`handleIncomingWhatsApp` in `whatsapp.ts` to Meta's
+WhatsApp Cloud API instead, which allows freeform replies to up to 5
+manually-registered test numbers with no template and no card. Either way,
+the webhook route, conversation state machine, and inbound parsing in
+`whatsapp.ts` stay as-is — only the outbound send call changes.
 
 ## Deploying to Railway
 
